@@ -125,7 +125,7 @@ class FabricStarterClient {
         let resp = await fn();
         resolve(resp);
     } catch (err) {
-        logger.trace(`Error: `, err, `\nRepeating transaction.: ${nTimes}.`);
+        logger.trace(`Error: `, err, `\nRe-trying invocation: ${nTimes}.`);
         setTimeout(() => {this.repeatInvoke(--nTimes, resolve, reject, fn)}, 3000);
     }
 
