@@ -120,7 +120,7 @@ class FabricStarterClient {
 
   async repeatInvoke(nTimes, resolve, reject, fn) {
 
-    if (nTimes <= 0) return reject("");
+    if (nTimes <= 0) return reject(`Invocation unsuccessful for ${cfg.INVOKE_RETRY_COUNT} retries.`);
     try {
         let resp = await fn();
         resolve(resp);
