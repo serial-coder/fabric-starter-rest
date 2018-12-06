@@ -168,7 +168,7 @@ const appRouter = (app) => {
 
   app.post('/channels/:channelId/chaincodes/:chaincodeId', asyncMiddleware(async (req, res, next) => {
     res.json(await fabricStarterClient.invoke(req.params.channelId, req.params.chaincodeId,
-      req.body.fcn, req.body.args, req.body.targets));
+      req.body.fcn, req.body.args, req.body.targets, req.query.waitForTransactionEvent));
   }));
 
 

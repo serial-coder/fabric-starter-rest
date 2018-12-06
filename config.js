@@ -31,5 +31,7 @@ module.exports = {
     ORDERER_MSP_DIR: ORDERER_MSP_DIR,
     ORDERER_ADDR: ordererAddr,
 
-    systemChannelId: systemChannelId
+    systemChannelId: systemChannelId,
+    INVOKE_RETRY_COUNT: process.env.INVOKE_RETRY_COUNT || 10
+
 };

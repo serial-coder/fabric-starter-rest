@@ -118,36 +118,53 @@ class FabricStarterClient {
     return channelEventHub;
   }
 
-  async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
-    const channel = await this.getChannel(channelId);
+  async repeatInvoke(nTimes, resolve, reject, fn) {
 
-    const tx_id = this.client.newTransactionID(/*true*/);
-    const proposal = {
-      chaincodeId: chaincodeId,
-      fcn: fcn,
-      args: args,
-      txId: tx_id,
-      targets: targets || [this.peer]
-    };
+    if (nTimes <= 0) return reject("");
+    try {
+        let resp = await fn();
+        resolve(resp);
+    } catch (err) {
+        logger.trace(`Error: `, err, `\nRepeating transaction.: ${nTimes}.`);
+        setTimeout(() => {this.repeatInvoke(--nTimes, resolve, reject, fn)}, 3000);
+    }
 
-    logger.trace('invoke', proposal);
-
-    const proposalResponse = await channel.sendTransactionProposal(proposal);
-
-    // logger.trace('proposalResponse', proposalResponse);
-
-    const transactionRequest = {
-      proposalResponses: proposalResponse[0],
-      proposal: proposalResponse[1],
-    };
-
-    const promise = waitForTransactionEvent ? this.waitForTransactionEvent(tx_id, channel) : Promise.resolve(tx_id);
-
-    const broadcastResponse = await channel.sendTransaction(transactionRequest);
-    logger.trace('broadcastResponse', broadcastResponse);
-
-    return promise;
   }
+
+    async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
+        const channel = await this.getChannel(channelId);
+        let fsClient = this;
+        return new Promise((resolve, reject) => {
+
+            fsClient.repeatInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, async function () {
+
+                const tx_id = fsClient.client.newTransactionID(/*true*/);
+                const proposal = {
+                    chaincodeId: chaincodeId,
+                    fcn: fcn,
+                    args: args,
+                    txId: tx_id,
+                    targets: targets || [fsClient.peer]
+                };
+
+                logger.trace('invoke', proposal);
+
+                const proposalResponse = await channel.sendTransactionProposal(proposal);
+                // logger.trace('proposalResponse', proposalResponse);
+
+                const transactionRequest = {
+                    proposalResponses: proposalResponse[0],
+                    proposal: proposalResponse[1],
+                };
+
+                let broadcastResponse = await channel.sendTransaction(transactionRequest);
+                logger.trace('broadcastResponse:', broadcastResponse);
+
+                const promise = waitForTransactionEvent ? fsClient.waitForTransactionEvent(tx_id, channel) : Promise.resolve(tx_id);
+                return promise;
+            });
+        });
+    }
 
   async waitForTransactionEvent(tx_id, channel) {
     const timeout = invokeTimeout;
