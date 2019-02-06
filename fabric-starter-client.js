@@ -25,10 +25,38 @@ class FabricStarterClient {
         this.networkConfig = networkConfig || require('./network')();
         logger.info('constructing with network config', JSON.stringify(this.networkConfig));
         this.client = Client.loadFromConfig(this.networkConfig); // or networkConfigFile
+        this.setConnectionOptions();
         this.peer = this.client.getPeersForOrg()[0];
         this.org = this.networkConfig.client.organization;
         this.affiliation = this.org;
         this.channelsInitializationMap = new Map();
+    }
+
+    setConnectionOptions() {
+        const defaultConnectionOptions = this.client.getConfigSetting('connection-options');
+
+        logger.debug('defaultConnectionOptions', defaultConnectionOptions);
+
+        const newConnectionOptions = {
+            'grpc.http2.max_pings_without_data': 0,
+            'grpc.max_pings_without_data': 0,
+            'grpc.http2.keepalive_time': 5,
+            'grpc.keepalive_time_ms': 5000,
+            'grpc.http2.keepalive_timeout': 20,
+            'grpc.keepalive_timeout_ms': 20000,
+            'grpc.http2.min_time_between_pings_ms': 5000,
+            'grpc.min_time_between_pings_ms': 5000,
+            'grpc.http2.keepalive_permit_without_calls': 1,
+            'grpc.keepalive_permit_without_calls': 1
+        };
+
+        // use the assign call to keep all other options and only update
+        // the one setting or add a setting.
+        const updatedDefaultConnectionOptions = Object.assign(defaultConnectionOptions, newConnectionOptions);
+
+        logger.debug('updatedDefaultConnectionOptions', updatedDefaultConnectionOptions);
+
+        this.client.setConfigSetting('connection-options', updatedDefaultConnectionOptions);
     }
 
     async init() {
@@ -78,7 +106,7 @@ class FabricStarterClient {
         orgName = orgName || this.org;
         peer = peer || this.peer;
         const peerQueryResponse = await this.client.queryPeers({target: peer}, true);
-        let peers = _.get(peerQueryResponse, `peers_by_org.${orgName}.peers`);
+        let peers = _.get(peerQueryResponse, `local_peers.${orgName}.peers`);
         return _.map(peers, p => this.createPeerFromUrl(p.endpoint));
     }
 
@@ -199,7 +227,7 @@ class FabricStarterClient {
 
             channel.addPeer(optionalPeer);
         } catch (e) {
-            logger.warn(`Error adding peer ${optionalPeer.getName()} to channel ${channelId}`);
+            logger.warn(`Error adding peer ${optionalPeer} to channel ${channelId}`);
         }
         return channel;
     }
@@ -270,7 +298,10 @@ class FabricStarterClient {
 
     async instantiateChaincode(channelId, chaincodeId, type, fnc, args, version, targets, waitForTransactionEvent) {
         const channel = await this.getChannel(channelId);
-        const peers = this.createTargetsList(channel, targets);
+        const targetsList = this.createTargetsList(channel, targets);
+        const foundPeers = targetsList[0];
+        const badPeers = targetsList[1];
+
         const tx_id = this.client.newTransactionID(true);
         const proposal = {
             chaincodeId: chaincodeId,
@@ -279,7 +310,7 @@ class FabricStarterClient {
             args: args || [],
             chaincodeVersion: version || '1.0',
             txId: tx_id,
-            targets: peers[0]
+            targets: foundPeers
         };
         let results = null;
         try {
@@ -297,7 +328,7 @@ class FabricStarterClient {
         const broadcastResponse = await channel.sendTransaction(transactionRequest);
         logger.trace('broadcastResponse', broadcastResponse);
         return promise.then(function (res) {
-            res.badPeers = peers[1];
+            res.badPeers = badPeers;
             return res;
         });
     }
@@ -316,18 +347,30 @@ class FabricStarterClient {
 
     async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
         const channel = await this.getChannel(channelId);
-        const peers = this.createTargetsList(channel, targets);
         let fsClient = this;
+
+        const proposal = {
+            chaincodeId: chaincodeId, fcn: fcn, args: args
+        };
+
+        let badPeers;
+
+        if(targets) {
+            const targetsList = this.createTargetsList(channel, targets);
+            const foundPeers = targetsList[0];
+            badPeers = targetsList[1];
+
+            proposal.targets = foundPeers;
+        }
+
         return new Promise((resolve, reject) => {
 
             fsClient.retryInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, async function () {
+                const txId = fsClient.client.newTransactionID(/*true*/);
 
-                const tx_id = fsClient.client.newTransactionID(/*true*/);
-                const proposal = {
-                    chaincodeId: chaincodeId, fcn: fcn, args: args, txId: tx_id,targets: peers[0]
-                };
+                proposal.txId = txId;
 
-                logger.trace('invoke', proposal);
+                logger.trace('invoke proposal', proposal);
 
                 const proposalResponse = await channel.sendTransactionProposal(proposal);
 
@@ -338,12 +381,12 @@ class FabricStarterClient {
                     proposal: proposalResponse[1],
                 };
 
-                const promise = waitForTransactionEvent ? fsClient.waitForTransactionEvent(tx_id, channel) : Promise.resolve(tx_id);
+                const promise = waitForTransactionEvent ? fsClient.waitForTransactionEvent(txId, channel) : Promise.resolve(txId);
 
                 const broadcastResponse = await channel.sendTransaction(transactionRequest);
                 logger.trace('broadcastResponse', broadcastResponse);
                 return promise.then(function (res) {
-                    res.badPeers = peers[1];
+                    res.badPeers = badPeers;
                     return res;
                 });
             });
@@ -392,17 +435,37 @@ class FabricStarterClient {
 
     async query(channelId, chaincodeId, fcn, args, targets) {
         const channel = await this.getChannel(channelId);
-        targets = _.attempt(JSON.parse, targets);
-        const peers = this.createTargetsList(channel, targets);
-        const request = {
-            chaincodeId: chaincodeId,
-            fcn: fcn,
-            args: args,
-            targets: peers[0]
-        };
-        logger.trace('query', request);
 
-        const responses = await channel.queryByChaincode(request);
+        const proposal = {
+            chaincodeId: chaincodeId, fcn: fcn
+        };
+
+        logger.trace('query args', args);
+
+        if(args) {
+            proposal.args = JSON.parse(args);
+        }
+        else {
+            proposal.args = [];
+        }
+
+        logger.trace('query targets', targets);
+
+        if(targets) {
+            const targetsList = this.createTargetsList(channel, JSON.parse(targets));
+            const foundPeers = targetsList[0];
+            const badPeers = targetsList[1];
+            logger.trace('badPeers', badPeers);
+
+            proposal.targets = foundPeers;
+        }
+        // else {
+        //     proposal.targets = [this.peer];
+        // }
+
+        logger.trace('query proposal', proposal);
+
+        const responses = await channel.queryByChaincode(proposal);
 
         return responses.map(r => {
             return r.toString('utf8');
@@ -517,7 +580,6 @@ class FabricStarterClient {
         let connectionOptions = {
             'ssl-target-name-override': peerUrl,
             //'ssl-target-name-override': 'localhost',
-            'grpc.keepalive_time_ms': 600000,
             pem: this.loadPemFromFile(`${cfg.PEER_CRYPTO_DIR}/peers/${mspSubPath}/msp/tlscacerts/tlsca.${org || cfg.org}.${domain || cfg.domain}-cert.pem`)
         };
         return connectionOptions;
