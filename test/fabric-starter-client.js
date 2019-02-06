@@ -21,6 +21,7 @@ describe('FabricStarterClient.', function () {
   let chaincodeId = 'reference';
   let fcn = 'ping';
   let args = [];
+  let transientMap = null;
 
   before('initialize', async () => {
     await fabricStarterClient.init();
@@ -258,7 +259,7 @@ describe('FabricStarterClient.', function () {
           logger.error('registerBlockEvent', e);
         });
 
-        const invokeResponse = await fabricStarterClient.invoke(channelId, chaincodeId, fcn, args);
+        const invokeResponse = await fabricStarterClient.invoke(channelId, chaincodeId, fcn, args, transientMap);
         logger.trace('invokeResponse', invokeResponse);
 
         await fabricStarterClient.disconnectChannelEventHub(channelId);
@@ -267,7 +268,7 @@ describe('FabricStarterClient.', function () {
 
     describe('#query', () => {
       it('queries chaincode on this channel', async () => {
-        const queryResponses = await fabricStarterClient.query(channelId, chaincodeId, fcn, args);
+        const queryResponses = await fabricStarterClient.query(channelId, chaincodeId, fcn, args, transientMap);
         logger.trace('queryResponses', queryResponses);
       });
     });
