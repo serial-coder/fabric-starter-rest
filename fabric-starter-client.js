@@ -296,7 +296,7 @@ class FabricStarterClient {
         });
     }
 
-    async instantiateChaincode(channelId, chaincodeId, type, fnc, args, version, targets, waitForTransactionEvent) {
+    async instantiateChaincode(channelId, chaincodeId, type, fnc, args, transientMap, version, targets, waitForTransactionEvent) {
         const channel = await this.getChannel(channelId);
         const targetsList = this.createTargetsList(channel, targets);
         const foundPeers = targetsList[0];
@@ -308,6 +308,7 @@ class FabricStarterClient {
             chaincodeType: type || 'node',
             fcn: fnc || 'init',
             args: args || [],
+            transientMap: transientMap || {},
             chaincodeVersion: version || '1.0',
             txId: tx_id,
             targets: foundPeers
@@ -345,12 +346,12 @@ class FabricStarterClient {
         }
     }
 
-    async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
+    async invoke(channelId, chaincodeId, fcn, args, transientMap, targets, waitForTransactionEvent) {
         const channel = await this.getChannel(channelId);
         let fsClient = this;
 
         const proposal = {
-            chaincodeId: chaincodeId, fcn: fcn, args: args
+            chaincodeId: chaincodeId, fcn: fcn, args: args, transientMap: transientMap || {}
         };
 
         let badPeers;
@@ -433,7 +434,7 @@ class FabricStarterClient {
         return racePromise;
     }
 
-    async query(channelId, chaincodeId, fcn, args, targets) {
+    async query(channelId, chaincodeId, fcn, args, transientMap, targets) {
         const channel = await this.getChannel(channelId);
 
         const proposal = {
@@ -447,6 +448,13 @@ class FabricStarterClient {
         }
         else {
             proposal.args = [];
+        }
+
+        if(transientMap) {
+            proposal.transientMap = JSON.parse(transientMap);
+        }
+        else {
+            proposal.transientMap = {};
         }
 
         logger.trace('query targets', targets);

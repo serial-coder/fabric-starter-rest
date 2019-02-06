@@ -159,12 +159,12 @@ const appRouter = (app) => {
 
   app.post('/channels/:channelId/chaincodes', asyncMiddleware(async (req, res, next) => {
     res.json(await fabricStarterClient.instantiateChaincode(req.params.channelId, req.body.chaincodeId,
-        req.body.type, req.body.fcn, req.body.args,  req.body.version,  req.body.targets));
+        req.body.type, req.body.fcn, req.body.args, res.body.transientMap, req.body.version, req.body.targets));
   }));
 
   app.get('/channels/:channelId/chaincodes/:chaincodeId', asyncMiddleware(async (req, res, next) => {
     let ret = await fabricStarterClient.query(req.params.channelId, req.params.chaincodeId,
-      req.query.fcn, req.query.args, req.query.targets);
+      req.query.fcn, req.query.args, req.query.transientMap, req.query.targets);
 
     if(ret[0].startsWith('Error')) {
       throw new Error(ret[0]);
@@ -175,7 +175,7 @@ const appRouter = (app) => {
 
   app.post('/channels/:channelId/chaincodes/:chaincodeId', asyncMiddleware(async (req, res, next) => {
     res.json(await fabricStarterClient.invoke(req.params.channelId, req.params.chaincodeId,
-      req.body.fcn, req.body.args, req.body.targets, req.query.waitForTransactionEvent));
+      req.body.fcn, req.body.args, req.body.transientMap, req.body.targets, req.query.waitForTransactionEvent));
   }));
 
   app.get('/consortium/members', asyncMiddleware(async (req, res, next) => {
