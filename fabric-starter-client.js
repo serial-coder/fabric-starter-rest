@@ -7,10 +7,8 @@ const Client = require('fabric-client');
 const unzip = require('unzip');
 const path = require('path');
 const urlParseLax = require('url-parse-lax');
-const chmodPlus  = require('chmod-plus');
-
+const chmodPlus = require('chmod-plus');
 const fabricCLI = require('./fabric-cli');
-
 
 //const networkConfigFile = '../crypto-config/network.json'; // or .yaml
 //const networkConfig = require('../crypto-config/network.json');
@@ -25,38 +23,10 @@ class FabricStarterClient {
         this.networkConfig = networkConfig || require('./network')();
         logger.info('constructing with network config', JSON.stringify(this.networkConfig));
         this.client = Client.loadFromConfig(this.networkConfig); // or networkConfigFile
-        this.setConnectionOptions();
         this.peer = this.client.getPeersForOrg()[0];
         this.org = this.networkConfig.client.organization;
         this.affiliation = this.org;
         this.channelsInitializationMap = new Map();
-    }
-
-    setConnectionOptions() {
-        const defaultConnectionOptions = this.client.getConfigSetting('connection-options');
-
-        logger.debug('defaultConnectionOptions', defaultConnectionOptions);
-
-        const newConnectionOptions = {
-            'grpc.http2.max_pings_without_data': 0,
-            'grpc.max_pings_without_data': 0,
-            'grpc.http2.keepalive_time': 5,
-            'grpc.keepalive_time_ms': 5000,
-            'grpc.http2.keepalive_timeout': 20,
-            'grpc.keepalive_timeout_ms': 20000,
-            'grpc.http2.min_time_between_pings_ms': 5000,
-            'grpc.min_time_between_pings_ms': 5000,
-            'grpc.http2.keepalive_permit_without_calls': 1,
-            'grpc.keepalive_permit_without_calls': 1
-        };
-
-        // use the assign call to keep all other options and only update
-        // the one setting or add a setting.
-        const updatedDefaultConnectionOptions = Object.assign(defaultConnectionOptions, newConnectionOptions);
-
-        logger.debug('updatedDefaultConnectionOptions', updatedDefaultConnectionOptions);
-
-        this.client.setConfigSetting('connection-options', updatedDefaultConnectionOptions);
     }
 
     async init() {
@@ -105,7 +75,7 @@ class FabricStarterClient {
     async queryPeers(orgName, peer) {
         orgName = orgName || this.org;
         peer = peer || this.peer;
-        const peerQueryResponse = await this.client.queryPeers({target: peer}, true);
+        const peerQueryResponse = await this.client.queryPeers({target: peer, useAdmin: true});
         let peers = _.get(peerQueryResponse, `local_peers.${orgName}.peers`);
         return _.map(peers, p => this.createPeerFromUrl(p.endpoint));
     }
@@ -151,7 +121,6 @@ class FabricStarterClient {
                 logger.error(res);
                 return res;
             }
-            return await this.joinChannel(channelId, orderer);
         } finally {
             this.chmodCryptoFolder();
         }
@@ -159,10 +128,8 @@ class FabricStarterClient {
 
     async joinChannel(channelId) {
         const tx2_id = this.client.newTransactionID(true);
-
         let peers = await this.queryPeers();
         let channel = await this.constructChannel(channelId, peers);
-
         let genesis_block = await channel.getGenesisBlock({txId: tx2_id});
         let gen_tx_id = this.client.newTransactionID(true);
         let j_request = {
@@ -170,7 +137,6 @@ class FabricStarterClient {
             block: genesis_block,
             txId: gen_tx_id
         };
-
         let result = await channel.joinChannel(j_request);
         logger.debug(`Join channel ${channelId}:`, result);
         return result;
@@ -183,12 +149,12 @@ class FabricStarterClient {
 
         try {
             let channelConfigEnvelope = JSON.parse(channelConfigBlock.toString());
-            let origChannelGroupConfig = _.get(channelConfigEnvelope,"data.data[0].payload.data.config");
+            let origChannelGroupConfig = _.get(channelConfigEnvelope, "data.data[0].payload.data.config");
 
             let newOrgConfigResp = await fabricCLI.prepareNewOrgConfig(orgId);
 
             let updatedConfig = _.merge({}, origChannelGroupConfig);
-            if (_.get(updatedConfig,"channel_group.groups")) {
+            if (_.get(updatedConfig, "channel_group.groups")) {
                 _.merge(updatedConfig.channel_group.groups, newOrgConfigResp.outputJson);
             }
 
@@ -204,7 +170,7 @@ class FabricStarterClient {
                 });
                 logger.info(`Update channel result ${channelId}:`, update);
                 this.invalidateChannelsCache(channelId);
-            } catch(e) {
+            } catch (e) {
                 logger.error(e);
             }
         } catch (e) {
@@ -217,7 +183,6 @@ class FabricStarterClient {
     async constructChannel(channelId, optionalPeer) {
         let channel = this.client.newChannel(channelId);
         channel.addOrderer(this.createOrderer());
-
         try {
             optionalPeer = optionalPeer || await this.queryPeers();
 
@@ -229,6 +194,7 @@ class FabricStarterClient {
         } catch (e) {
             logger.warn(`Error adding peer ${optionalPeer} to channel ${channelId}`);
         }
+
         return channel;
     }
 
@@ -298,9 +264,6 @@ class FabricStarterClient {
 
     async instantiateChaincode(channelId, chaincodeId, type, fnc, args, version, targets, waitForTransactionEvent) {
         const channel = await this.getChannel(channelId);
-        const targetsList = this.createTargetsList(channel, targets);
-        const foundPeers = targetsList[0];
-        const badPeers = targetsList[1];
 
         const tx_id = this.client.newTransactionID(true);
         const proposal = {
@@ -309,12 +272,21 @@ class FabricStarterClient {
             fcn: fnc || 'init',
             args: args || [],
             chaincodeVersion: version || '1.0',
-            txId: tx_id,
-            targets: foundPeers
+            txId: tx_id
         };
+
+        let badPeers;
+
+        if (targets) {
+            const targetsList = this.createTargetsList(channel, targets);
+            const foundPeers = targetsList[0];
+            badPeers = targetsList[1];
+
+            proposal.targets = foundPeers;
+        }
         let results = null;
         try {
-            results = await channel.sendInstantiateProposal(proposal);
+            results = await channel.sendInstantiateProposal(proposal, invokeTimeout);
             logger.info('Sent instantiate proposal');
         } catch (error) {
             logger.error('In catch - sendInstantiateProposal', error.message);
@@ -346,7 +318,7 @@ class FabricStarterClient {
     }
 
     async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
-        const channel = await this.getChannel(channelId);
+        const channel = this.client.getChannel(channelId, false);//await this.getChannel(channelId);
         let fsClient = this;
 
         const proposal = {
@@ -355,7 +327,7 @@ class FabricStarterClient {
 
         let badPeers;
 
-        if(targets) {
+        if (targets) {
             const targetsList = this.createTargetsList(channel, targets);
             const foundPeers = targetsList[0];
             badPeers = targetsList[1];
@@ -377,6 +349,7 @@ class FabricStarterClient {
                 // logger.trace('proposalResponse', proposalResponse);
 
                 const transactionRequest = {
+                    // tx_id: tx_id,
                     proposalResponses: proposalResponse[0],
                     proposal: proposalResponse[1],
                 };
@@ -442,7 +415,7 @@ class FabricStarterClient {
 
         logger.trace('query args', args);
 
-        if(args) {
+        if (args) {
             proposal.args = JSON.parse(args);
         }
         else {
@@ -451,7 +424,7 @@ class FabricStarterClient {
 
         logger.trace('query targets', targets);
 
-        if(targets) {
+        if (targets) {
             const targetsList = this.createTargetsList(channel, JSON.parse(targets));
             const foundPeers = targetsList[0];
             const badPeers = targetsList[1];
