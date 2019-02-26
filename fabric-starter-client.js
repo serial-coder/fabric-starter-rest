@@ -13,10 +13,9 @@ const fabricCLI = require('./fabric-cli');
 //const networkConfigFile = '../crypto-config/network.json'; // or .yaml
 //const networkConfig = require('../crypto-config/network.json');
 
-const invokeTimeout = process.env.INVOKE_TIMEOUT || 60000;
 const asLocalhost = (process.env.DISCOVER_AS_LOCALHOST === 'true');
 
-logger.debug(`invokeTimeout=${invokeTimeout} asLocalhost=${asLocalhost}`);
+logger.debug(`invokeTimeout=${cfg.INVOKE_TIMEOUT} asLocalhost=${asLocalhost}`);
 
 class FabricStarterClient {
     constructor(networkConfig) {
@@ -27,6 +26,7 @@ class FabricStarterClient {
         this.org = this.networkConfig.client.organization;
         this.affiliation = this.org;
         this.channelsInitializationMap = new Map();
+        this.registerQueue = new Map();
     }
 
     async init() {
@@ -53,12 +53,20 @@ class FabricStarterClient {
     }
 
     async loginOrRegister(username, password, affiliation) {
-        try {
-            await this.login(username, password);
-        } catch (e) {
-            await this.register(username, password, affiliation);
-            await this.login(username, password);
+        if (this.registerQueue[username]) {
+            return this.registerQueue[username];
         }
+        this.registerQueue[username] = new Promise((resolve, reject) => {
+            return this.login(username, password).then(resolve)
+                .catch((err) => {
+                    return this.register(username, password, affiliation)
+                })
+                    .then(() => this.login(username, password)).then(()=>this.registerQueue[username]=null).then(resolve)
+                .catch(err=>{
+                    reject()
+                });
+        });
+        return this.registerQueue[username];
     }
 
     getSecret() {
@@ -209,7 +217,7 @@ class FabricStarterClient {
                 try {
                     logger.debug(`Initialise channel: ${channelId}`);
                     const channel = this.client.getChannel(channelId, false) || await this.constructChannel(channelId);
-                    await channel.initialize({discover: true, asLocalhost: asLocalhost});
+                    await channel.initialize({discover: true, asLocalhost: asLocalhost, target: this.peer}); //TODO: is target needed
                     await channel.queryInfo(this.peer, true);
                     resolve(channel);
                 } catch (e) {
@@ -284,13 +292,9 @@ class FabricStarterClient {
 
             proposal.targets = foundPeers;
         }
-        let results = null;
-        try {
-            results = await channel.sendInstantiateProposal(proposal, invokeTimeout);
-            logger.info('Sent instantiate proposal');
-        } catch (error) {
-            logger.error('In catch - sendInstantiateProposal', error.message);
-        }
+        logger.info('Sent instantiate proposal');
+        const results = await channel.sendInstantiateProposal(proposal, cfg.INVOKE_TIMEOUT);
+        this.errorCheck(results);
         const transactionRequest = {
             txId: tx_id,
             proposalResponses: results[0],
@@ -318,7 +322,7 @@ class FabricStarterClient {
     }
 
     async invoke(channelId, chaincodeId, fcn, args, targets, waitForTransactionEvent) {
-        const channel = this.client.getChannel(channelId, false);//await this.getChannel(channelId);
+        const channel = await this.getChannel(channelId, false);//await this.getChannel(channelId);
         let fsClient = this;
 
         const proposal = {
@@ -327,7 +331,7 @@ class FabricStarterClient {
 
         let badPeers;
 
-        if (targets) {
+        if (targets.targets || targets.peers) {
             const targetsList = this.createTargetsList(channel, targets);
             const foundPeers = targetsList[0];
             badPeers = targetsList[1];
@@ -337,16 +341,20 @@ class FabricStarterClient {
 
         return new Promise((resolve, reject) => {
 
-            fsClient.retryInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, async function () {
+            return fsClient.retryInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, async function () {
                 const txId = fsClient.client.newTransactionID(/*true*/);
 
                 proposal.txId = txId;
 
                 logger.trace('invoke proposal', proposal);
+                let proposalResponse;
+                try {
+                    proposalResponse = await channel.sendTransactionProposal(proposal);
+                    fsClient.errorCheck(proposalResponse);
 
-                const proposalResponse = await channel.sendTransactionProposal(proposal);
-
-                // logger.trace('proposalResponse', proposalResponse);
+                }catch (e) {
+                    return reject(e);
+                }
 
                 const transactionRequest = {
                     // tx_id: tx_id,
@@ -366,8 +374,16 @@ class FabricStarterClient {
         })
     }
 
+    errorCheck(results){
+        // logger.trace('proposalResponse', proposalResponse);
+        let errorCheck = _.get(results, [0][0]).toString();
+        if (_.startsWith(errorCheck, 'Error')) {
+            throw new Error(errorCheck);
+        }
+    }
+
     async waitForTransactionEvent(tx_id, channel) {
-        const timeout = invokeTimeout;
+        const timeout = cfg.INVOKE_TIMEOUT;
         const id = tx_id.getTransactionID();
         let timeoutHandle;
 
@@ -424,8 +440,8 @@ class FabricStarterClient {
 
         logger.trace('query targets', targets);
 
-        if (targets) {
-            const targetsList = this.createTargetsList(channel, JSON.parse(targets));
+        if (targets.targets || targets.peers) {
+            const targetsList = this.createTargetsList(channel, targets);
             const foundPeers = targetsList[0];
             const badPeers = targetsList[1];
             logger.trace('badPeers', badPeers);
@@ -448,7 +464,7 @@ class FabricStarterClient {
     createTargetsList(channel, targets) {
         let peers = [];
         let badPeers = [];
-        _.each(targets, function (value) {
+        _.each(_.compact(_.concat([], targets.targets, targets.peers)), function (value) {
             let peer = _.find(channel.getChannelPeers(), p => p._name === value);
             if (_.isNil(peer)) {
                 logger.error(`Peer ${value} not found`);
@@ -457,6 +473,7 @@ class FabricStarterClient {
                 peers.push(peer);
             }
         });
+
         if (_.isEmpty(peers)) {
             logger.trace("Using default peer");
             peers.push(this.peer);
