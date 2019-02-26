@@ -35,29 +35,96 @@ class FabricStarterClient {
     }
 
     async login(username, password) {
-        this.user = await this.client.setUserContext({username: username, password: password});
+        // console.log('*** 1 ***\n');
+
+        // this.user = await this.client.setUserContext({username: username, password: password});
+
+        await this.fabricCaClient.enroll({
+            enrollmentID: username,
+            enrollmentSecret: password,
+            attr_reqs: [
+                { name: "firstName", optional: false }
+            ]
+        }).then(enrollment => {
+            // console.log('*** 2 ***\n');
+            console.log('Successfully enrolled user: "' + username + '"');
+            return this.client.createUser({
+                username: username,
+                mspid: this.client.getMspid(),
+                cryptoContent: { 
+                    privateKeyPEM: enrollment.key.toBytes(), 
+                    signedCertPEM: enrollment.certificate
+                }
+            });
+        }).then(async (user) => {
+            // console.log('*** 3 ***\n');
+            this.user = await this.client.setUserContext(user);
+        })
+
+        // console.log('*** 4 ***\n');
     }
 
     async register(username, password, affiliation) {
+        // console.log('*** reg #1 ***\n');
+
         const registrar = this.fabricCaClient.getRegistrar()[0];
-        const admin = await this.client.setUserContext({
-            username: registrar.enrollId,
-            password: registrar.enrollSecret
+
+        // const admin = await this.client.setUserContext({
+        //     username: registrar.enrollId,
+        //     password: registrar.enrollSecret
+        // });
+
+        // console.log('*** reg #2 ***\n');
+
+        await this.fabricCaClient.enroll({
+            enrollmentID: registrar.enrollId,
+            enrollmentSecret: registrar.enrollSecret,
+            attr_reqs: [
+                { name: "hf.Registrar.Roles" },
+                { name: "hf.Registrar.Attributes" },
+                // { name: "firstName", optional: false }
+            ]
+        }).then(enrollment => {
+            // console.log('*** reg #3 ***\n');
+            console.log('Successfully enrolled admin: "' + registrar.enrollId + '"');
+            return this.client.createUser({
+                username: registrar.enrollId,
+                mspid: this.client.getMspid(),
+                cryptoContent: { 
+                    privateKeyPEM: enrollment.key.toBytes(), 
+                    signedCertPEM: enrollment.certificate
+                }
+            });
+        }).then(admin => {
+            // console.log('*** reg #4 ***\n');
+            return this.client.setUserContext(admin);
+        }).then(async (admin) => {
+            // console.log('*** reg #5 ***\n');
+            await this.fabricCaClient.register({
+                enrollmentID: username,
+                enrollmentSecret: password,
+                affiliation: affiliation || this.affiliation,
+                maxEnrollments: -1,
+                role: 'client',
+                attrs: [
+                    { name: 'firstName', value: 'Phuwanai', ecert: true }
+                ]
+            }, admin);
         });
-        await this.fabricCaClient.register({
-            enrollmentID: username,
-            enrollmentSecret: password,
-            affiliation: affiliation || this.affiliation,
-            maxEnrollments: -1
-        }, admin);
+
+        // console.log('*** reg #6 ***\n');
     }
 
     async loginOrRegister(username, password, affiliation) {
         try {
+            // console.log('*** 0.1 ***\n');
             await this.login(username, password);
         } catch (e) {
+            // console.log('*** 0.2 ***\n');
             await this.register(username, password, affiliation);
+            // console.log('*** 0.3 ***\n');
             await this.login(username, password);
+            // console.log('*** 0.4 ***\n');
         }
     }
 
