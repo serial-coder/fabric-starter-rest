@@ -109,8 +109,19 @@ const appRouter = (app) => {
   }));
 
   app.post('/users', asyncMiddleware(async (req, res, next) => {
+
+    let user_attrs = null;
+    if (req.body.attrs) {
+      user_attrs = JSON.parse(req.body.attrs)
+    }
+
     await fabricStarterClient.init();
-    await fabricStarterClient.loginOrRegister(req.body.username, req.body.password);
+    await fabricStarterClient.loginOrRegister(
+      req.body.username, 
+      req.body.password, 
+      null, 
+      user_attrs
+    );
     mapFabricStarterClient[req.body.username] = fabricStarterClient;
 
     const token = jsonwebtoken.sign({sub: fabricStarterClient.user.getName()}, jwtSecret);

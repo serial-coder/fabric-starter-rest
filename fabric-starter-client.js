@@ -34,19 +34,24 @@ class FabricStarterClient {
         this.fabricCaClient = this.client.getCertificateAuthority();
     }
 
-    async login(username, password) {
-        // console.log('*** 1 ***\n');
-
+    async login(username, password, attrs) {
         // this.user = await this.client.setUserContext({username: username, password: password});
+
+        let attr_reqs = [];
+        if (attrs) {
+            attrs.map(attr => {        
+                attr_reqs.push({ 
+                    "name":     attr.name,
+                    "optional": false
+                });
+            });
+        }
 
         await this.fabricCaClient.enroll({
             enrollmentID: username,
             enrollmentSecret: password,
-            attr_reqs: [
-                { name: "firstName", optional: false }
-            ]
+            attr_reqs: attr_reqs
         }).then(enrollment => {
-            // console.log('*** 2 ***\n');
             console.log('Successfully enrolled user: "' + username + '"');
             return this.client.createUser({
                 username: username,
@@ -57,24 +62,18 @@ class FabricStarterClient {
                 }
             });
         }).then(async (user) => {
-            // console.log('*** 3 ***\n');
             this.user = await this.client.setUserContext(user);
         })
 
-        // console.log('*** 4 ***\n');
     }
 
-    async register(username, password, affiliation) {
-        // console.log('*** reg #1 ***\n');
-
+    async register(username, password, affiliation, attrs) {
         const registrar = this.fabricCaClient.getRegistrar()[0];
 
         // const admin = await this.client.setUserContext({
         //     username: registrar.enrollId,
         //     password: registrar.enrollSecret
         // });
-
-        // console.log('*** reg #2 ***\n');
 
         await this.fabricCaClient.enroll({
             enrollmentID: registrar.enrollId,
@@ -85,7 +84,6 @@ class FabricStarterClient {
                 // { name: "firstName", optional: false }
             ]
         }).then(enrollment => {
-            // console.log('*** reg #3 ***\n');
             console.log('Successfully enrolled admin: "' + registrar.enrollId + '"');
             return this.client.createUser({
                 username: registrar.enrollId,
@@ -96,35 +94,36 @@ class FabricStarterClient {
                 }
             });
         }).then(admin => {
-            // console.log('*** reg #4 ***\n');
             return this.client.setUserContext(admin);
         }).then(async (admin) => {
-            // console.log('*** reg #5 ***\n');
+            let attr_regs = [];
+            if (attrs) {
+                attrs.map(attr => {        
+                    attr_regs.push({ 
+                        "name":  attr.name,
+                        "value": attr.value,
+                        "ecert": true
+                    });
+                });
+            }
+
             await this.fabricCaClient.register({
                 enrollmentID: username,
                 enrollmentSecret: password,
                 affiliation: affiliation || this.affiliation,
                 maxEnrollments: -1,
                 role: 'client',
-                attrs: [
-                    { name: 'firstName', value: 'Phuwanai', ecert: true }
-                ]
+                attrs: attr_regs
             }, admin);
         });
-
-        // console.log('*** reg #6 ***\n');
     }
 
-    async loginOrRegister(username, password, affiliation) {
+    async loginOrRegister(username, password, affiliation, attrs) {
         try {
-            // console.log('*** 0.1 ***\n');
-            await this.login(username, password);
+            await this.login(username, password, attrs);
         } catch (e) {
-            // console.log('*** 0.2 ***\n');
-            await this.register(username, password, affiliation);
-            // console.log('*** 0.3 ***\n');
-            await this.login(username, password);
-            // console.log('*** 0.4 ***\n');
+            await this.register(username, password, affiliation, attrs);
+            await this.login(username, password, attrs);
         }
     }
 
