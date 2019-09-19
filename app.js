@@ -60,6 +60,7 @@ app.use(jwt({secret: jwtSecret}).unless({path: ['/', '/users', '/mspid', /\/cons
 const mapFabricStarterClient = {};
 
 app.use(async (req, res, next) => {
+
   if (req.user) {
     const login = req.user.sub;
 
@@ -115,6 +116,8 @@ const appRouter = (app) => {
       user_attrs = JSON.parse(req.body.attrs)
     }
 
+    fabricStarterClient = new FabricStarterClient();
+
     await fabricStarterClient.init();
     await fabricStarterClient.loginOrRegister(
       req.body.username, 
@@ -122,6 +125,7 @@ const appRouter = (app) => {
       null, 
       user_attrs
     );
+    
     mapFabricStarterClient[req.body.username] = fabricStarterClient;
 
     const token = jsonwebtoken.sign({sub: fabricStarterClient.user.getName()}, jwtSecret);
