@@ -228,25 +228,76 @@ const appRouter = (app) => {
   // sampleCC - Invoke Sample CC Func
   app.post('/sampleCC/invokeSampleCCFunc', asyncMiddleware(async (req, res, next) => {
     let payload = req.body
-    let result = await sampleCCService.invokeSampleCCFunc(payload)
+    let {result, error} = await sampleCCService.invokeSampleCCFunc(payload)
 
-    res.json({
-      "status": 201,
-      "description": "OK",
-      "result": result
-    })
+    if (!error) {
+      res.json({
+        "status": 201,
+        "description": "OK",
+        "result": result
+      })
+    } else {
+      res.json({
+        "status": 400,
+        "error": error
+      })
+    }
   }))
+
+  // // sampleCC - Invoke Sample CC Func
+  // app.post('/sampleCC/invokeSampleCCFunc', asyncMiddleware(async (req, res, next) => {
+  //   let {result, error} = await sampleCCService.invokeSampleCCFunc()
+
+  //   if (!error) {
+  //     res.json({
+  //       "status": 201,
+  //       "description": "OK",
+  //       "result": result
+  //     })
+  //   } else {
+  //     res.json({
+  //       "status": 400,
+  //       "error": error
+  //     })
+  //   }
+  // }))
 
   // sampleCC - Query Sample CC Func
   app.post('/sampleCC/querySampleCCFunc', asyncMiddleware(async (req, res, next) => {
-    let result = await sampleCCService.querySampleCCFunc()
+    let payload = req.body
+    let {result, error} = await sampleCCService.querySampleCCFunc(payload)
 
-    res.json({
-      "status": 200,
-      "description": "OK",
-      "result": result
-    })
+    if (!error) {
+      res.json({
+        "status": 201,
+        "description": "OK",
+        "result": result
+      })
+    } else {
+      res.json({
+        "status": 400,
+        "error": error
+      })
+    }
   }))
+
+  // // sampleCC - Query Sample CC Func
+  // app.post('/sampleCC/querySampleCCFunc', asyncMiddleware(async (req, res, next) => {
+  //   let {result, error} = await sampleCCService.querySampleCCFunc()
+
+  //   if (!error) {
+  //     res.json({
+  //       "status": 200,
+  //       "description": "OK",
+  //       "result": result
+  //     })
+  //   } else {
+  //     res.json({
+  //       "status": 400,
+  //       "error": error
+  //     })
+  //   }
+  // }))
 };
 
 appRouter(app);
