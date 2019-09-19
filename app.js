@@ -268,7 +268,7 @@ const appRouter = (app) => {
     if (!error) {
       res.json({
         "status": 201,
-        "result": result
+        "result": JSON.parse(result)
       })
     } else {
       res.json({
@@ -285,7 +285,7 @@ const appRouter = (app) => {
   //   if (!error) {
   //     res.json({
   //       "status": 200,
-  //       "result": result
+  //       "result": JSON.parse(result)
   //     })
   //   } else {
   //     res.json({
