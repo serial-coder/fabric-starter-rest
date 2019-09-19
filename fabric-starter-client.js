@@ -372,15 +372,19 @@ class FabricStarterClient {
         });
     }
 
-    async retryInvoke(nTimes, resolve, reject, fn) {
+    async retryInvoke(nTimes, resolve, reject, errMsg, fn) {
+        // if (nTimes <= 0) return reject(`Invocation unsuccessful for ${cfg.INVOKE_RETRY_COUNT} retries.`);
+        if (nTimes <= 0) 
+            return reject(errMsg.toString().split('Error: ').pop());
 
-        if (nTimes <= 0) return reject(`Invocation unsuccessful for ${cfg.INVOKE_RETRY_COUNT} retries.`);
         try {
             let response = await fn();
             resolve(response);
         } catch (err) {
             logger.trace(`Error: `, err, `\nRe-trying invocation: ${nTimes}.`);
-            setTimeout(() => {this.retryInvoke(--nTimes, resolve, reject, fn)}, 3000);
+
+            errMsg = err.endorsements[0];
+            setTimeout(() => {this.retryInvoke(--nTimes, resolve, reject, errMsg, fn)}, 3000);
         }
     }
 
@@ -405,7 +409,7 @@ class FabricStarterClient {
 
         return new Promise((resolve, reject) => {
 
-            fsClient.retryInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, async function () {
+            fsClient.retryInvoke(cfg.INVOKE_RETRY_COUNT, resolve, reject, null, async function () {
                 const txId = fsClient.client.newTransactionID(/*true*/);
 
                 proposal.txId = txId;
