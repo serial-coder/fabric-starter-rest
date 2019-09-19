@@ -233,7 +233,6 @@ const appRouter = (app) => {
     if (!error) {
       res.json({
         "status": 201,
-        "description": "OK",
         "result": result
       })
     } else {
@@ -251,7 +250,6 @@ const appRouter = (app) => {
   //   if (!error) {
   //     res.json({
   //       "status": 201,
-  //       "description": "OK",
   //       "result": result
   //     })
   //   } else {
@@ -270,7 +268,6 @@ const appRouter = (app) => {
     if (!error) {
       res.json({
         "status": 201,
-        "description": "OK",
         "result": result
       })
     } else {
@@ -288,7 +285,6 @@ const appRouter = (app) => {
   //   if (!error) {
   //     res.json({
   //       "status": 200,
-  //       "description": "OK",
   //       "result": result
   //     })
   //   } else {
