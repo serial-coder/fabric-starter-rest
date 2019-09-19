@@ -19,20 +19,24 @@ class ChaincodeService {
       JSON.stringify(args),
       transientMap,
       targets
-    );
-
-    logger.info(`result ${JSON.stringify(result)}`)
+    )
 
     if(result[0].startsWith('Error')) {
-      throw new Error(result[0]);
+      return {
+          error: result[0]
+      }
     }
-
-    return result
+    else {
+      return {
+          error: null,
+          result: result[0]
+      }
+    }
   }
 
   // Invoke with speicific func name and args
-  async invoke (functionName, args, transientMap=null, targets=null, waitForTransactionEvent=null) {
-    let result = await this.fabricStarterClient.invoke(
+  invoke (functionName, args, transientMap=null, targets=null, waitForTransactionEvent=null) {
+    return this.fabricStarterClient.invoke(
       this.channelId,
       this.chaincodeId,
       functionName,
@@ -41,10 +45,17 @@ class ChaincodeService {
       targets,
       waitForTransactionEvent
     )
-
-    logger.info(`result ${JSON.stringify(result)}`)
-
-    return result
+    .then(result => {
+      return {
+        error: null,
+        result: result
+      }
+    })
+    .catch(err => {
+      return {
+        error: err
+      }
+    })
   }
 }
 
