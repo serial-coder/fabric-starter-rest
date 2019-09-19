@@ -16,6 +16,8 @@ const FabricStarterClient = require('./fabric-starter-client');
 let fabricStarterClient = new FabricStarterClient();
 const Socket = require('./rest-socket-server');
 
+const ChaincodeSampleService = require('./service/chaincode-sample-service')
+
 // parse json payload and urlencoded params in GET
 app.use(bodyParser.json({ limit: '100MB', type:'application/json'}));
 app.use(bodyParser.urlencoded({extended: true, limit: '100MB'}));
@@ -82,6 +84,10 @@ app.use(async (req, res, next) => {
       mapFabricStarterClient[login] = fabricStarterClient;
     }
   }
+
+  // Init chaincode services
+  sampleCCService = new ChaincodeSampleService(fabricStarterClient, "commonChannel", "sampleCC")
+
   next();
 });
 
@@ -125,7 +131,7 @@ const appRouter = (app) => {
       null, 
       user_attrs
     );
-    
+
     mapFabricStarterClient[req.body.username] = fabricStarterClient;
 
     const token = jsonwebtoken.sign({sub: fabricStarterClient.user.getName()}, jwtSecret);
@@ -217,7 +223,30 @@ const appRouter = (app) => {
     res.json(await fabricStarterClient.getConsortiumMemberList());
   }));
 
+  // ===== Blockchain Service Api =====
 
+  // sampleCC - Invoke Sample CC Func
+  app.post('/sampleCC/invokeSampleCCFunc', asyncMiddleware(async (req, res, next) => {
+    let payload = req.body
+    let result = await sampleCCService.invokeSampleCCFunc(payload)
+
+    res.json({
+      "status": 201,
+      "description": "OK",
+      "result": result
+    })
+  }))
+
+  // sampleCC - Query Sample CC Func
+  app.post('/sampleCC/querySampleCCFunc', asyncMiddleware(async (req, res, next) => {
+    let result = await sampleCCService.querySampleCCFunc()
+
+    res.json({
+      "status": 200,
+      "description": "OK",
+      "result": result
+    })
+  }))
 };
 
 appRouter(app);
