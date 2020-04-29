@@ -3,53 +3,61 @@ const fs = require('fs'),
     _ = require('lodash'),
     envsub = require('envsub'),
     shell = require('shelljs'),
-    Enum  = require('enumify').Enum;
+    Enum = require('enumify').Enum;
 
-const cfg = require('./config.js');
+
+const cfg = require('./config'),
+    certsManager = require('./certs-manager');
+
 const logger = cfg.log4js.getLogger('FabricCLI');
-
-
-const CERT_FOLDERS_PREFIXES = {
-    'admincerts': {certFileNamePart: 'Admin@', envVar: 'ORG_ADMIN_CERT'},
-    'cacerts': {certFileNamePart: 'ca.', envVar: 'ORG_ROOT_CERT'},
-    'tlscacerts': {certFileNamePart: 'tlsca.', envVar: 'ORG_TLS_ROOT_CERT'}
-};
 
 const WGET_OPTS = process.env.WGET_OPTS || '-N';
 
-class TRANSLATE_OP extends Enum {}
+class TRANSLATE_OP extends Enum {
+}
+
 TRANSLATE_OP.initEnum(['proto_encode', 'proto_decode', 'compute_update']);
 
-class CONFIG_TYPE extends Enum {}
+class CONFIG_TYPE extends Enum {
+}
+
 CONFIG_TYPE.initEnum(['common.Config', 'common.Block', 'common.ConfigUpdate', 'common.Envelope']);
 
 class FabricCLI {
 
-    downloadCerts(orgDomain, org) {
-        _.forEach(_.keys(CERT_FOLDERS_PREFIXES), certFolder => {
-            let certPrefix=CERT_FOLDERS_PREFIXES[certFolder];
-            let directoryPrefix = this.getCertFileDir(certFolder, org ? cfg.orgCryptoConfigPath(org) : cfg.ORDERER_CRYPTO_DIR);
-            let certFileName = this.getCertFileName(certPrefix, org);
-            shell.exec(`/usr/bin/wget ${WGET_OPTS} --directory-prefix ${directoryPrefix} http://www.${orgDomain}/msp/${certFolder}/${certFileName}`);
+    downloadCerts(orgObj, domain = cfg.domain, wwwPort = 80) {
+        certsManager.forEachCertificate(orgObj, domain, (certificateSubDir, fullCertificateDirectoryPath, certificateFileName, directoryPrefixConfig) => {
+            const orgDomain = orgObj ? `${orgObj.orgId}.${domain}` : domain;
+            shell.exec(`/usr/bin/wget ${WGET_OPTS} --directory-prefix ${fullCertificateDirectoryPath} http://www.${orgDomain}:${wwwPort||80}/msp/${certificateSubDir}/${certificateFileName}`);
         });
     }
 
-    downloadOrdererMSP() {
-        this.downloadCerts(cfg.domain);
+    downloadOrdererMSP(wwwPort = cfg.ORDERER_WWW_PORT) {
+        this.downloadCerts(null, cfg.ORDERER_DOMAIN, wwwPort);
     }
 
-    downloadOrgMSP(org) {
-        this.downloadCerts(`${org}.${cfg.domain}`, org);
+    downloadOrgMSP(orgObj, domain) {
+        this.downloadCerts(orgObj, domain, orgObj.wwwPort);
     }
 
 
-    execShellCommand(cmd) {
+    prepareRaftOrderer(files) {
+        this.execShellCommand("docker-compose -f docker-compose-orderer-cli.yaml up -d", cfg.YAMLS_DIR,
+            _.assign(this.getEnv(), {ORDERER_GENESIS_PROFILE: 'RaftOrdererGenesis', DOMAIN: `osn-${cfg.org}.${cfg.domain}`}));
+    }
+
+
+    execShellCommand(cmd, dir, extraEnv) {
+        const env = _.assign({}, process.env, extraEnv || {});
+        const opts = {env: env};
         logger.debug(cmd);
-        shell.exec(`${cmd} &2>1`);
+        shell.exec(`${cmd} &2>1`, opts);
     }
 
     async envSubst(templateFile, outputFile, env) {
         let envs = _.map(_.keys(env), k => new Object({name: k, value: env[k]}));
+        logger.debug(`Envsubst: ${templateFile} to ${outputFile}`);
+        logger.debug(envs);
         return envsub({templateFile, outputFile, options: Object.assign({diff: false}, {envs: envs})});
     }
 
@@ -58,15 +66,33 @@ class FabricCLI {
         this.execShellCommand(`configtxgen -channelID ${channelName} -configPath ${configDir} -profile ${profile} -outputCreateChannelTx ${outputTxFile}`)
     }
 
-    execPeerCommand(command, paramsStr) {
-        this.execShellCommand(`peer ${command} -o ${cfg.ORDERER_ADDR} --tls --cafile ${cfg.ORDERER_TLS_CERT} ${paramsStr}`);
+    execPeerCommand(command, paramsStr, extraEnv) {
+        this.execShellCommand(`echo $CORE_PEER_LOCALMSPID`, null, extraEnv);
+        this.execShellCommand(`peer ${command} -o ${cfg.ORDERER_ADDR} --tls --cafile ${cfg.ORDERER_TLS_CERT} ${paramsStr}`, null, extraEnv);
     }
 
     async generateChannelConfigTx(channelId) {
-        await this.envSubst("templates/configtx-template.yaml", `${cfg.CRYPTO_CONFIG_DIR}/configtx.yaml`);
+        await this.envSubst(`${cfg.TEMPLATES_DIR}/configtx-template.yaml`, `${cfg.CRYPTO_CONFIG_DIR}/configtx.yaml`, this.getEnv());
+
         let outputTxFile = `${cfg.CRYPTO_CONFIG_DIR}/configtx/channel_${channelId}.tx`;
         this.generateConfigTxForChannel(channelId, cfg.CRYPTO_CONFIG_DIR, "CHANNEL", outputTxFile);
         return outputTxFile;
+    }
+
+    getEnv() {
+        return {
+            DOMAIN: cfg.DOMAIN,
+            ORG: cfg.org,
+            PEER0_PORT: cfg.peer0Port,
+            ORDERER_NAME: cfg.ordererName,
+            ORDERER_DOMAIN: cfg.ORDERER_DOMAIN,
+            ORDERER_NAME_PREFIX: cfg.ORDERER_NAME_PREFIX,
+            ORDERER_BATCH_TIMEOUT: cfg.ORDERER_BATCH_TIMEOUT,
+            ORDERER_GENERAL_LISTENPORT: cfg.ordererPort,
+            RAFT0_PORT: cfg.RAFT0_PORT,
+            RAFT1_PORT: cfg.RAFT0_PORT,
+            RAFT2_PORT: cfg.RAFT0_PORT
+        };
     }
 
     async generateChannelConfigTxContent(channelId) {
@@ -80,10 +106,10 @@ class FabricCLI {
         return this.loadFileContent(filePath);
     }
 
-    fetchChannelConfig(channelId) {
+    fetchChannelConfig(channelId, extraEnv) {
         const channelConfigFile = `${channelId}_config.pb`;
         const outputFilePath = `${cfg.CRYPTO_CONFIG_DIR}/${channelConfigFile}`;
-        this.execPeerCommand(`channel fetch config ${outputFilePath}`, `-c ${channelId}`);
+        this.execPeerCommand(`channel fetch config ${outputFilePath}`, `-c ${channelId}`, extraEnv);
         return outputFilePath;
     }
 
@@ -98,8 +124,12 @@ class FabricCLI {
 
     translateChannelConfig(configFileName) {
         const outputFileName = `${path.dirname(configFileName)}/${path.basename(configFileName, ".pb")}.json`;
-        this.translateProtobufConfig(TRANSLATE_OP.proto_decode,  CONFIG_TYPE['common.Block'], configFileName, outputFileName);
-        return this.loadFileContentSync(outputFileName);
+        this.translateProtobufConfig(TRANSLATE_OP.proto_decode, CONFIG_TYPE['common.Block'], configFileName, outputFileName);
+        const channelConfigProtobuf = this.loadFileContentSync(outputFileName);
+        const channelConfigEnvelope = JSON.parse(_.toString(channelConfigProtobuf));
+        let origChannelGroupConfig = _.get(channelConfigEnvelope, "data.data[0].payload.data.config");
+
+        return origChannelGroupConfig;
     }
 
 
@@ -109,7 +139,7 @@ class FabricCLI {
         const originalConfigPbFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_originalConfig.pb`;
         const updatedConfigWithJsonFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_configUpdate.json`;
         const updatedConfigPbFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_configUpdate.pb`;
-        const computedUpdatePbFileName= `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.pb`;
+        const computedUpdatePbFileName = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.pb`;
 
 
         fs.writeFileSync(originalConfigJsonFile, JSON.stringify(originalConfig));
@@ -125,16 +155,21 @@ class FabricCLI {
     async prepareComputeUpdateEnvelope(channelId, originalConfig, configWithChangesJson) { //todo: for future reuse
         await this.computeChannelConfigUpdate(channelId, originalConfig, configWithChangesJson);
 
-        const computedUpdatePbFileName= `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.pb`;
-        const computedUpdateJsonFile= `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.json`;
-        const updateEnvelopeJsonFile= `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update_envelope.json`;
-        const updateEnvelopePbFile= `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update_envelope.pb`;
+        const computedUpdatePbFileName = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.pb`;
+        const computedUpdateJsonFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update.json`;
+        const updateEnvelopeJsonFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update_envelope.json`;
+        const updateEnvelopePbFile = `${cfg.CRYPTO_CONFIG_DIR}/${channelId}_update_envelope.pb`;
 
 
         this.translateProtobufConfig(TRANSLATE_OP.proto_decode, CONFIG_TYPE["common.ConfigUpdate"], computedUpdatePbFileName, computedUpdateJsonFile);
         let computedUpdate = this.loadFileContentSync(computedUpdateJsonFile);
-        computedUpdate=JSON.parse(_.toString(computedUpdate));
-        let envelope = JSON.stringify({payload: {header: {channel_header: {channel_id: channelId, type: 2}},data: {config_update: computedUpdate}}});
+        computedUpdate = JSON.parse(_.toString(computedUpdate));
+        let envelope = JSON.stringify({
+            payload: {
+                header: {channel_header: {channel_id: channelId, type: 2}},
+                data: {config_update: computedUpdate}
+            }
+        });
         fs.writeFileSync(updateEnvelopeJsonFile, envelope);
         this.translateProtobufConfig(TRANSLATE_OP.proto_encode, CONFIG_TYPE['common.Envelope'], updateEnvelopeJsonFile, updateEnvelopePbFile);
 
@@ -142,24 +177,42 @@ class FabricCLI {
     }
 
     async prepareNewOrgConfig(newOrg) {
+        return this.prepareOrgConfigStruct(newOrg, 'NewOrg.json', {NEWORG_PEER0_PORT: newOrg.peer0Port || cfg.DEFAULT_PEER0PORT})
+    }
+
+    async prepareNewConsortiumConfig(newOrg, consortiumName) {
+        return this.prepareOrgConfigStruct(newOrg, 'Consortium.json', {CONSORTIUM_NAME: consortiumName || cfg.DEFAULT_CONSORTIUM})
+    }
+
+    async prepareOrgConfigStruct(newOrg, configTemplateFile, extraEnv) {
         this.downloadOrgMSP(newOrg);
 
-        let env = {NEWORG: newOrg, DOMAIN:cfg.domain};
-        _.forEach(_.keys(CERT_FOLDERS_PREFIXES), certFolder => {
-            let certPrefix=CERT_FOLDERS_PREFIXES[certFolder];
-            let certFilePath = path.join(this.getCertFileDir(certFolder, cfg.orgCryptoConfigPath(newOrg)), this.getCertFileName(certPrefix, newOrg));
-            let certContent = this.loadFileContentSync(certFilePath);
-            env[certPrefix.envVar]=Buffer.from(certContent).toString('base64');
-        });
+        let env = _.assign({
+            NEWORG: newOrg.orgId,
+            DOMAIN: cfg.domain,
+        }, extraEnv);
 
-        const outputFile = `crypto-config/${newOrg}_NewOrg.json`;
-        let newOrgSubstitution = await this.envSubst("templates/NewOrg.json", outputFile, env);
+        certsManager.forEachCertificate(newOrg, cfg.domain, (certificateSubDir, fullCertificateDirectoryPath, certificateFileName, directoryPrefixConfig) => {
+            let certContent = this.loadFileContentSync(path.join(fullCertificateDirectoryPath, certificateFileName));
+            env[directoryPrefixConfig.envVar] = Buffer.from(certContent).toString('base64');
+        });
+        /*
+                    _.forEach(_.keys(CERT_FOLDERS_PREFIXES), certFolder => {
+                    let certPrefix = CERT_FOLDERS_PREFIXES[certFolder];
+                    let certFilePath = path.join(this.getCertFileDir(certFolder, cfg.orgCryptoConfigPath(newOrg)), this.getCertFileName(certPrefix, newOrg));
+                    let certContent = this.loadFileContentSync(certFilePath);
+                    env[certPrefix.envVar] = Buffer.from(certContent).toString('base64');
+                });
+        */
+
+        const outputFile = `crypto-config/${newOrg.orgId}_OrgConfig.json`;
+        let newOrgSubstitution = await this.envSubst(`${cfg.TEMPLATES_DIR}/${configTemplateFile}`, outputFile, env);
 
         return {outputFile, outputJson: JSON.parse(newOrgSubstitution.outputContents)};
     }
 
-    getCertFileDir(certFolder, domaiCertPath) {
-        return `${domaiCertPath}/msp/${certFolder}`;
+    getCertFileDir(certFolder, domainCertPath) {
+        return `${domainCertPath}/msp/${certFolder}`;
     }
 
     getCertFileName(certPrefix, org) {
@@ -181,7 +234,7 @@ class FabricCLI {
     }
 
     loadFileContentSync(fileName) {
-       return fs.readFileSync(fileName);
+        return fs.readFileSync(fileName);
     }
 }
 

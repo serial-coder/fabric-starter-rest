@@ -1,6 +1,3 @@
-//export DOMAIN=dds.ru ORG=regulator CRYPTO_CONFIG_DIR=/home/oleg/workspace/decentralized-depository/artifacts/crypto-config ORGS='{"regulator":"localhost:7051","s1":"localhost:7056"}' CAS='{"regulator":"localhost:7054"}'
-//export DOMAIN=example.com ORG=org1 CRYPTO_CONFIG_DIR=/home/oleg/workspace/fabric-starter/crypto-config ORGS='{"org1":"localhost:7051","org2":"localhost:7056"}' CAS='{"org1":"localhost:7054"}'
-
 const assert = require('assert');
 const logger = require('log4js').getLogger('FabricStarterClientTest');
 const fs = require('fs-extra');
@@ -142,12 +139,19 @@ describe('FabricStarterClient.', function () {
         describe('#joinChannelCommon', () => {
             it('join channel "Common"', async () => {
                 try {
-                    //await fabricStarterClient.joinChannel(testChannelName);
+                    await fabricStarterClient.joinChannel(testChannelName);
                     assert.fail('should fail joining second time');
                 } catch (e) {
                     console.log(e);
                     assert.ok(e.actual == "should fail joining second time");
                 }
+            })
+        });
+
+        describe('#updateChannelConfig', () => {
+            it('add org to channel', async () => {
+                await fabricStarterClient.addOrgToChannel(testChannelName, "org2");
+                assert.ok(false);
             })
         })
     });
@@ -157,16 +161,16 @@ describe('FabricStarterClient.', function () {
             await fabricStarterClient.loginOrRegister(username, password);
         });
 
-        describe('#getConsortiumMembers', () => {
-            it('get Consortium members', async () => {
-                let result = await fabricStarterClient.getConsortiumMemberList(cfg.systemChannelId);
-                await setTimeout(function () {}, 1000);
-                const channel = await fabricStarterClient.getChannel(cfg.systemChannelId, true);
-                assert.equal(channel.getName(), cfg.systemChannelId);
-            })
-        })
+      describe('#getConsortiumMembers', () => {
+          it('get Consortium members', async () => {
+              let orgs = await fabricStarterClient.getConsortiumMemberList();
+              let result = orgs[0]
+              logger.warn('result ', result)
+              assert.equal(result, 'org1')
+          })
+      })
 
-    });
+  });
 
 
   describe('Query peer.', () => {
