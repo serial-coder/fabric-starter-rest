@@ -1,0 +1,7 @@
+VERSION=cc-level-abac-support
+IMAGE=seria1coder/fabric-starter-rest-serial-coder-extended
+docker build -t ${IMAGE}:${VERSION} .
+docker tag ${IMAGE}:${VERSION} ${IMAGE}:latest
+
+
+docker system prune
