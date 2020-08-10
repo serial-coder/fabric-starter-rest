@@ -67,3 +67,5 @@ hfc-*
 webapp/scripts
 webapp/src
 ./upload
+
+.DS_Store
