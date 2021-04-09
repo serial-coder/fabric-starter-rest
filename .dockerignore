@@ -1,7 +1,9 @@
 node_modules
+**/node_modules
 test
 hfc-cvs
 hfc-kvs
 .storage
 .idea
 .git
+crypto-config
